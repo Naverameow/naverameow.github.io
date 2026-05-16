@@ -210,7 +210,19 @@
     const SEEK_COOLDOWN_MS = 1800;
     const SEND_COOLDOWN_MS = 350;
 
-    serverUrlInput.value = localStorage.getItem('watchTogetherServer') || 'ws://localhost:8765';
+    // Set this to your Render Web Service URL after deployment, for example:
+    // const RENDER_WS_URL = 'wss://watch-together-sync.onrender.com';
+    // Localhost keeps using ws://localhost:8765 for development.
+    const RENDER_WS_URL = 'wss://YOUR-RENDER-URL';
+
+    function defaultWebSocketUrl() {
+      const pageLocation = globalThis.location || { hostname: '', protocol: 'file:' };
+      const isLocal = ['localhost', '127.0.0.1', ''].includes(pageLocation.hostname);
+      if (isLocal || pageLocation.protocol === 'file:') return 'ws://localhost:8765';
+      return RENDER_WS_URL;
+    }
+
+    serverUrlInput.value = localStorage.getItem('watchTogetherServer') || defaultWebSocketUrl();
     video.volume = Number(localStorage.getItem('watchTogetherVolume') || 1);
     volume.value = video.volume;
 
@@ -275,6 +287,9 @@
       wantedAction = action;
       const url = serverUrlInput.value.trim();
       if (!url) return alert('Enter a WebSocket server URL first.');
+      if (url.includes('YOUR-RENDER-URL')) {
+        return alert('Set the WebSocket server URL to your Render wss:// URL first.');
+      }
       localStorage.setItem('watchTogetherServer', url);
 
       clearTimeout(reconnectTimer);
