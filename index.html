@@ -203,6 +203,7 @@
     let wantedAction = null;
     let mediaObjectUrl = null;
     let outboundSeq = 0;
+    const queuedMessages = [];
     const clientId = (globalThis.crypto && globalThis.crypto.randomUUID) ? globalThis.crypto.randomUUID() : String(Date.now() + Math.random());
 
     const FORCE_SEEK_DRIFT = 1.25;
@@ -210,16 +211,16 @@
     const SEEK_COOLDOWN_MS = 1800;
     const SEND_COOLDOWN_MS = 350;
 
-    // Set this to your Render Web Service URL after deployment, for example:
-    // const RENDER_WS_URL = 'wss://watch-together-sync.onrender.com';
-    // Localhost keeps using ws://localhost:8765 for development.
-    const RENDER_WS_URL = 'wss://YOUR-RENDER-URL';
+    // Optional override for a Cloudflare Tunnel URL. Set before this script runs:
+    // window.WS_URL = 'wss://your-tunnel.trycloudflare.com';
+    // Local files and localhost keep using ws://localhost:8765 for development.
+    const DEFAULT_LOCAL_WS_URL = 'ws://localhost:8765';
 
     function defaultWebSocketUrl() {
+      if (globalThis.WS_URL) return globalThis.WS_URL;
       const pageLocation = globalThis.location || { hostname: '', protocol: 'file:' };
       const isLocal = ['localhost', '127.0.0.1', ''].includes(pageLocation.hostname);
-      if (isLocal || pageLocation.protocol === 'file:') return 'ws://localhost:8765';
-      return RENDER_WS_URL;
+      return isLocal || pageLocation.protocol === 'file:' ? DEFAULT_LOCAL_WS_URL : '';
     }
 
     serverUrlInput.value = localStorage.getItem('watchTogetherServer') || defaultWebSocketUrl();
@@ -287,9 +288,6 @@
       wantedAction = action;
       const url = serverUrlInput.value.trim();
       if (!url) return alert('Enter a WebSocket server URL first.');
-      if (url.includes('YOUR-RENDER-URL')) {
-        return alert('Set the WebSocket server URL to your Render wss:// URL first.');
-      }
       localStorage.setItem('watchTogetherServer', url);
 
       clearTimeout(reconnectTimer);
@@ -322,6 +320,7 @@
           pendingSyncAfterReconnect = false;
           setTimeout(() => broadcastPlaybackState('sync', { force: true, reason: 'queued-after-reconnect' }), 250);
         }
+        setTimeout(flushQueuedMessages, 350);
         updateBadges();
       };
 
@@ -357,9 +356,25 @@
       }, delay);
     }
 
-    function send(message) {
+    function queueMessage(message) {
+      if (!roomCode || message.type === 'create' || message.type === 'join' || message.type === 'resync_request') return;
+      queuedMessages.push(message);
+      if (queuedMessages.length > 25) queuedMessages.shift();
+      logDebug('message queued until reconnect', { type: message.type, queued: queuedMessages.length });
+    }
+
+    function flushQueuedMessages() {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !queuedMessages.length) return;
+      logDebug('flushing queued messages', { queued: queuedMessages.length });
+      while (queuedMessages.length && ws.readyState === WebSocket.OPEN) {
+        send(queuedMessages.shift(), { skipQueue: true });
+      }
+    }
+
+    function send(message, options = {}) {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         logDebug('outgoing skipped - websocket not open', message);
+        if (!options.skipQueue) queueMessage(message);
         return false;
       }
       const payload = { ...message, sender: clientId, client_id: clientId, seq: ++outboundSeq };
