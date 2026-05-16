@@ -102,6 +102,9 @@
       <input id="serverUrl" placeholder="ws://localhost:8765 or wss://your-server.example" autocomplete="off" />
       <small>Use <b>wss://</b> when this page is hosted on HTTPS GitHub Pages.</small>
 
+      <label for="username">Your name</label>
+      <input id="username" placeholder="Name shown in chat (example: Alex)" autocomplete="nickname" />
+
       <div class="row" style="margin-top: 12px;">
         <button id="createRoom" type="button">Create Room</button>
         <input id="roomCode" placeholder="Room code (example: ABC123)" autocomplete="off" />
@@ -112,6 +115,7 @@
         <span id="status" class="pill bad">Disconnected</span>
         <span id="role" class="pill">Permissions: shared</span>
         <span id="room" class="pill">Room: <span class="room-code">none</span></span>
+        <span id="userCount" class="pill">Users online: 0</span>
         <span id="syncStatus" class="pill">Sync: idle</span>
       </div>
     </section>
@@ -152,6 +156,7 @@
 
     <section class="card">
       <h2>Chat</h2>
+      <div id="usersList" class="notice" style="margin-bottom: 10px;">Users online: none</div>
       <div id="chatLog"></div>
       <div class="row" style="margin-top: 8px;">
         <input id="chatText" placeholder="Optional message" />
@@ -171,10 +176,12 @@
     const video = document.getElementById('video');
     const loadingEl = document.getElementById('loading');
     const serverUrlInput = document.getElementById('serverUrl');
+    const usernameInput = document.getElementById('username');
     const roomCodeInput = document.getElementById('roomCode');
     const statusEl = document.getElementById('status');
     const roleEl = document.getElementById('role');
     const roomEl = document.getElementById('room');
+    const userCountEl = document.getElementById('userCount');
     const syncStatusEl = document.getElementById('syncStatus');
     const playPauseBtn = document.getElementById('playPause');
     const muteBtn = document.getElementById('mute');
@@ -182,6 +189,7 @@
     const resyncBtn = document.getElementById('resync');
     const sendChatBtn = document.getElementById('sendChat');
     const chatLog = document.getElementById('chatLog');
+    const usersList = document.getElementById('usersList');
     const debugLog = document.getElementById('debugLog');
     const progress = document.getElementById('progress');
     const volume = document.getElementById('volume');
@@ -191,6 +199,7 @@
     let ws = null;
     let role = 'peer';
     let roomCode = '';
+    let username = '';
     let reconnectTimer = null;
     let reconnectAttempts = 0;
     let isRemoteUpdate = false;
@@ -223,7 +232,28 @@
       return isLocal || pageLocation.protocol === 'file:' ? DEFAULT_LOCAL_WS_URL : '';
     }
 
+    function readSessionValue(key) {
+      try { return sessionStorage.getItem(key) || ''; } catch { return ''; }
+    }
+
+    function writeSessionValue(key, value) {
+      try { sessionStorage.setItem(key, value); } catch { /* ignored */ }
+    }
+
+    function fallbackUsername() {
+      const existing = readSessionValue('watchTogetherUsername');
+      return existing || `User${Math.floor(100 + Math.random() * 900)}`;
+    }
+
+    function getUsername() {
+      username = (usernameInput.value || '').trim().slice(0, 32) || fallbackUsername();
+      usernameInput.value = username;
+      writeSessionValue('watchTogetherUsername', username);
+      return username;
+    }
+
     serverUrlInput.value = localStorage.getItem('watchTogetherServer') || defaultWebSocketUrl();
+    usernameInput.value = readSessionValue('watchTogetherUsername');
     video.volume = Number(localStorage.getItem('watchTogetherVolume') || 1);
     volume.value = video.volume;
 
@@ -250,6 +280,7 @@
     function updateBadges() {
       roleEl.textContent = 'Permissions: shared';
       roomEl.innerHTML = 'Room: <span class="room-code">' + (roomCode || 'none') + '</span>';
+      usernameInput.disabled = Boolean(roomCode);
       resyncBtn.disabled = !roomCode;
       sendChatBtn.disabled = !roomCode || !ws || ws.readyState !== WebSocket.OPEN;
     }
@@ -283,6 +314,15 @@
       chatLog.scrollTop = chatLog.scrollHeight;
     }
 
+    function updatePresence(message) {
+      const users = Array.isArray(message.users) ? message.users : [];
+      userCountEl.textContent = `Users online: ${message.count ?? users.length}`;
+      usersList.textContent = `Users online: ${users.length ? users.join(', ') : 'none'}`;
+      logDebug('user count update', { event: message.event, user: message.user, count: message.count, users });
+      if (message.event === 'join') addChatLine('System', `${message.user} joined.`);
+      if (message.event === 'leave') addChatLine('System', `${message.user} left.`);
+    }
+
     // ----- WebSocket connection, reconnect, and room rejoin -----
     function connect(action) {
       wantedAction = action;
@@ -312,9 +352,9 @@
         setStatus('Connected', 'ok');
         logDebug('websocket connected');
         if (wantedAction.type === 'create' && !roomCode) {
-          send({ type: 'create' });
+          send({ type: 'create', user: getUsername() });
         } else {
-          send({ type: 'join', room: wantedAction.room || roomCode });
+          send({ type: 'join', room: wantedAction.room || roomCode, user: getUsername() });
         }
         if (pendingSyncAfterReconnect && roomCode) {
           pendingSyncAfterReconnect = false;
@@ -392,6 +432,11 @@
       if (msg.type === 'created' || msg.type === 'joined') {
         role = 'peer';
         roomCode = msg.room;
+        if (msg.user) {
+          username = msg.user;
+          usernameInput.value = msg.user;
+          writeSessionValue('watchTogetherUsername', msg.user);
+        }
         roomCodeInput.value = roomCode;
         updateBadges();
         setSyncStatus('connected as peer', 'ok');
@@ -418,7 +463,17 @@
         return;
       }
 
-      if (msg.type === 'chat') addChatLine(msg.role || 'Peer', msg.text || '');
+      if (msg.type === 'presence') {
+        updatePresence(msg);
+        return;
+      }
+
+      if (msg.type === 'chat') {
+        const chatUser = msg.user || msg.role || 'Peer';
+        const chatText = msg.message || msg.text || '';
+        logDebug('chat received', { user: chatUser, message: chatText });
+        addChatLine(chatUser, chatText);
+      }
     }
 
     // ----- Collaborative playback sync: every peer may update room state; remote updates never rebroadcast. -----
@@ -650,7 +705,10 @@
       const input = document.getElementById('chatText');
       const text = input.value.trim();
       if (!text) return;
-      send({ type: 'chat', room: roomCode, text });
+      const chatUser = getUsername();
+      addChatLine(chatUser, text);
+      logDebug('chat send', { user: chatUser, message: text });
+      send({ type: 'chat', room: roomCode, user: chatUser, message: text, text });
       input.value = '';
     };
 
