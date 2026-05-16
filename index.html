@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Watch Together</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #0b1120;
+      --card: #111827;
+      --card-2: #1f2937;
+      --line: #374151;
+      --text: #f9fafb;
+      --muted: #9ca3af;
+      --accent: #3b82f6;
+      --accent-2: #60a5fa;
+      --danger: #7f1d1d;
+      --ok: #065f46;
+      --warn: #78350f;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(circle at top, #172554 0, var(--bg) 42rem); color: var(--text); }
+    main { width: min(980px, 100%); margin: 0 auto; padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+    h1 { margin: 0 0 4px; font-size: clamp(1.7rem, 6vw, 2.5rem); }
+    h2 { margin: 0 0 12px; }
+    .hint, small { color: var(--muted); }
+    .card { background: rgba(17, 24, 39, 0.94); border: 1px solid var(--line); border-radius: 18px; padding: 16px; margin: 14px 0; box-shadow: 0 12px 35px rgba(0, 0, 0, 0.25); }
+    label { display: block; margin: 10px 0 6px; font-weight: 700; }
+    input, button { font: inherit; border-radius: 12px; border: 1px solid #4b5563; padding: 12px; }
+    input { width: 100%; min-height: 48px; background: #020617; color: var(--text); }
+    button { min-height: 48px; background: var(--accent); color: white; cursor: pointer; font-weight: 700; touch-action: manipulation; }
+    button.secondary { background: #374151; }
+    button.ghost { background: transparent; border-color: #64748b; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .row > input { flex: 1 1 230px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 7px 11px; background: #374151; margin: 3px; font-weight: 700; }
+    .ok { background: var(--ok); }
+    .bad { background: var(--danger); }
+    .warn { background: var(--warn); }
+    .room-code { color: #bfdbfe; letter-spacing: 0.12em; font-size: 1.05rem; }
+
+    .player { overflow: hidden; padding: 0; }
+    .video-frame { position: relative; background: #000; border-radius: 18px 18px 0 0; overflow: hidden; }
+    /* Keep the video in normal DOM flow. Fullscreen is requested on this exact video element, never simulated with CSS. */
+    video {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 210px;
+      max-height: 68vh;
+      aspect-ratio: 16 / 9;
+      object-fit: contain;
+      background: #000;
+    }
+    .loading {
+      position: absolute;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(0, 0, 0, 0.45);
+      font-weight: 800;
+      pointer-events: none;
+    }
+    .loading.visible { display: grid; }
+    .spinner { width: 34px; height: 34px; border: 4px solid rgba(255,255,255,0.25); border-top-color: white; border-radius: 50%; animation: spin 0.9s linear infinite; margin: 0 auto 10px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .attached-controls { padding: 14px; background: #0f172a; border-top: 1px solid #1f2937; }
+    .timeline { width: 100%; accent-color: var(--accent-2); cursor: pointer; }
+    .control-grid { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin-top: 10px; }
+    .media-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+    .media-buttons button { min-width: 52px; padding: 10px 12px; }
+    .time { color: #dbeafe; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: center; }
+    .volume { display: flex; align-items: center; gap: 8px; min-width: min(220px, 100%); }
+    .volume input { min-height: unset; padding: 0; accent-color: var(--accent-2); }
+    .status-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .notice { border-left: 4px solid var(--accent-2); padding: 10px 12px; background: rgba(59, 130, 246, 0.12); border-radius: 10px; color: #dbeafe; }
+    #chatLog, #debugLog { height: 120px; overflow: auto; background: #020617; border: 1px solid #1f2937; border-radius: 12px; padding: 10px; font-size: 0.92rem; }
+    #debugLog { height: 150px; color: #cbd5e1; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+
+    @media (max-width: 680px) {
+      main { padding: 10px; }
+      .card { padding: 12px; border-radius: 14px; }
+      .control-grid { grid-template-columns: 1fr; }
+      .time { text-align: left; }
+      .media-buttons button { flex: 1 1 92px; }
+      video { min-height: 180px; max-height: 58vh; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Watch Together</h1>
+    <p class="hint">Syncs playback state only. Each person selects the same local video file or direct video URL.</p>
+
+    <section class="card">
+      <label for="serverUrl">WebSocket server URL</label>
+      <input id="serverUrl" placeholder="ws://localhost:8765 or wss://your-server.example" autocomplete="off" />
+      <small>Use <b>wss://</b> when this page is hosted on HTTPS GitHub Pages.</small>
+
+      <div class="row" style="margin-top: 12px;">
+        <button id="createRoom" type="button">Create Room</button>
+        <input id="roomCode" placeholder="Room code (example: ABC123)" autocomplete="off" />
+        <button id="joinRoom" type="button" class="secondary">Join Room</button>
+      </div>
+
+      <div class="status-grid" aria-live="polite">
+        <span id="status" class="pill bad">Disconnected</span>
+        <span id="role" class="pill">Permissions: shared</span>
+        <span id="room" class="pill">Room: <span class="room-code">none</span></span>
+        <span id="syncStatus" class="pill">Sync: idle</span>
+      </div>
+    </section>
+
+    <section class="card player">
+      <div class="video-frame">
+        <video id="video" preload="metadata" playsinline webkit-playsinline controls></video>
+        <div id="loading" class="loading"><div><div class="spinner"></div><div>Buffering...</div></div></div>
+      </div>
+
+      <div class="attached-controls">
+        <label for="fileInput">Local video file</label>
+        <input id="fileInput" type="file" accept="video/mp4,video/webm,video/x-matroska,.mp4,.webm,.mkv" />
+        <div id="fileInfo" class="notice" style="margin-top: 10px;">No file selected. MP4/WebM are safest; MKV only works in browsers that support its codecs.</div>
+
+        <label for="urlInput">Or direct video URL</label>
+        <div class="row">
+          <input id="urlInput" placeholder="https://example.com/video.mp4" autocomplete="off" />
+          <button id="loadUrl" type="button" class="secondary">Load URL</button>
+        </div>
+
+        <input id="progress" class="timeline" type="range" min="0" max="1000" value="0" step="1" aria-label="Playback progress" />
+        <div class="control-grid">
+          <div class="media-buttons">
+            <button id="playPause" type="button">▶ Play</button>
+            <button id="mute" type="button" class="secondary">🔊 Mute</button>
+            <button id="fullscreen" type="button" class="secondary">⛶ Fullscreen</button>
+            <button id="resync" type="button" class="ghost" disabled>Resync</button>
+          </div>
+          <div class="volume">
+            <span>Volume</span>
+            <input id="volume" type="range" min="0" max="1" value="1" step="0.01" aria-label="Volume" />
+          </div>
+          <div id="timeDisplay" class="time">0:00 / 0:00</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Chat</h2>
+      <div id="chatLog"></div>
+      <div class="row" style="margin-top: 8px;">
+        <input id="chatText" placeholder="Optional message" />
+        <button id="sendChat" type="button" class="secondary" disabled>Send</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Debug log</h2>
+      <p class="hint">Useful for codec, reconnect, and sync issues. The same messages are also written to the browser console.</p>
+      <div id="debugLog"></div>
+    </section>
+  </main>
+
+  <script>
+    // ----- Element references and app state -----
+    const video = document.getElementById('video');
+    const loadingEl = document.getElementById('loading');
+    const serverUrlInput = document.getElementById('serverUrl');
+    const roomCodeInput = document.getElementById('roomCode');
+    const statusEl = document.getElementById('status');
+    const roleEl = document.getElementById('role');
+    const roomEl = document.getElementById('room');
+    const syncStatusEl = document.getElementById('syncStatus');
+    const playPauseBtn = document.getElementById('playPause');
+    const muteBtn = document.getElementById('mute');
+    const fullscreenBtn = document.getElementById('fullscreen');
+    const resyncBtn = document.getElementById('resync');
+    const sendChatBtn = document.getElementById('sendChat');
+    const chatLog = document.getElementById('chatLog');
+    const debugLog = document.getElementById('debugLog');
+    const progress = document.getElementById('progress');
+    const volume = document.getElementById('volume');
+    const timeDisplay = document.getElementById('timeDisplay');
+    const fileInfo = document.getElementById('fileInfo');
+
+    let ws = null;
+    let role = 'peer';
+    let roomCode = '';
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    let isRemoteUpdate = false;
+    let userDraggingProgress = false;
+    let lastLocalSeekSent = 0;
+    let lastRemoteCorrection = 0;
+    let lastSentEventKey = '';
+    let lastSentAt = 0;
+    let pendingSyncAfterReconnect = false;
+    let wantedAction = null;
+    let mediaObjectUrl = null;
+    let outboundSeq = 0;
+    const clientId = (globalThis.crypto && globalThis.crypto.randomUUID) ? globalThis.crypto.randomUUID() : String(Date.now() + Math.random());
+
+    const FORCE_SEEK_DRIFT = 1.25;
+    const GENTLE_DRIFT = 0.25;
+    const SEEK_COOLDOWN_MS = 1800;
+    const SEND_COOLDOWN_MS = 350;
+
+    serverUrlInput.value = localStorage.getItem('watchTogetherServer') || 'ws://localhost:8765';
+    video.volume = Number(localStorage.getItem('watchTogetherVolume') || 1);
+    volume.value = video.volume;
+
+    // ----- Logging and status helpers -----
+    function logDebug(label, data = '') {
+      const text = `[${new Date().toLocaleTimeString()}] ${label}${data ? ' ' + (typeof data === 'string' ? data : JSON.stringify(data)) : ''}`;
+      console.log('[WatchTogether]', label, data);
+      const div = document.createElement('div');
+      div.textContent = text;
+      debugLog.appendChild(div);
+      debugLog.scrollTop = debugLog.scrollHeight;
+    }
+
+    function setStatus(text, kind) {
+      statusEl.textContent = text;
+      statusEl.className = 'pill ' + kind;
+    }
+
+    function setSyncStatus(text, kind = '') {
+      syncStatusEl.textContent = 'Sync: ' + text;
+      syncStatusEl.className = 'pill ' + kind;
+    }
+
+    function updateBadges() {
+      roleEl.textContent = 'Permissions: shared';
+      roomEl.innerHTML = 'Room: <span class="room-code">' + (roomCode || 'none') + '</span>';
+      resyncBtn.disabled = !roomCode;
+      sendChatBtn.disabled = !roomCode || !ws || ws.readyState !== WebSocket.OPEN;
+    }
+
+    function formatTime(seconds) {
+      if (!Number.isFinite(seconds)) return '0:00';
+      const s = Math.max(0, Math.floor(seconds));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = String(s % 60).padStart(2, '0');
+      return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+    }
+
+    function updatePlayerUi() {
+      playPauseBtn.textContent = video.paused ? '▶ Play' : '⏸ Pause';
+      muteBtn.textContent = video.muted || video.volume === 0 ? '🔇 Unmute' : '🔊 Mute';
+      timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+      if (!userDraggingProgress && Number.isFinite(video.duration) && video.duration > 0) {
+        progress.value = Math.round((video.currentTime / video.duration) * 1000);
+      }
+    }
+
+    function showLoading(show) {
+      loadingEl.classList.toggle('visible', show);
+    }
+
+    function addChatLine(name, text) {
+      const div = document.createElement('div');
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${name}: ${text}`;
+      chatLog.appendChild(div);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    // ----- WebSocket connection, reconnect, and room rejoin -----
+    function connect(action) {
+      wantedAction = action;
+      const url = serverUrlInput.value.trim();
+      if (!url) return alert('Enter a WebSocket server URL first.');
+      localStorage.setItem('watchTogetherServer', url);
+
+      clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+      }
+
+      setStatus('Connecting...', 'warn');
+      logDebug('websocket connecting', { url, action });
+      try {
+        ws = new WebSocket(url);
+      } catch (err) {
+        setStatus('Invalid WebSocket URL', 'bad');
+        logDebug('websocket constructor failed', err.message || String(err));
+        addChatLine('System', err.message || 'Could not open WebSocket.');
+        return;
+      }
+
+      ws.onopen = () => {
+        reconnectAttempts = 0;
+        setStatus('Connected', 'ok');
+        logDebug('websocket connected');
+        if (wantedAction.type === 'create' && !roomCode) {
+          send({ type: 'create' });
+        } else {
+          send({ type: 'join', room: wantedAction.room || roomCode });
+        }
+        if (pendingSyncAfterReconnect && roomCode) {
+          pendingSyncAfterReconnect = false;
+          setTimeout(() => broadcastPlaybackState('sync', { force: true, reason: 'queued-after-reconnect' }), 250);
+        }
+        updateBadges();
+      };
+
+      ws.onmessage = event => {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch { return; }
+        logDebug('incoming', msg);
+        handleMessage(msg);
+      };
+
+      ws.onclose = () => {
+        setStatus('Disconnected - reconnecting...', 'bad');
+        setSyncStatus('offline', 'bad');
+        updateBadges();
+        logDebug('websocket closed');
+        if (wantedAction || roomCode) scheduleReconnect();
+      };
+
+      ws.onerror = event => {
+        setStatus('Connection error', 'bad');
+        logDebug('websocket error', event.type || 'error');
+      };
+    }
+
+    function scheduleReconnect() {
+      clearTimeout(reconnectTimer);
+      const delay = Math.min(1000 * 2 ** reconnectAttempts, 10000);
+      reconnectAttempts += 1;
+      logDebug('reconnect scheduled', { delay, reconnectAttempts });
+      reconnectTimer = setTimeout(() => {
+        const action = roomCode ? { type: 'join', room: roomCode } : wantedAction;
+        connect(action);
+      }, delay);
+    }
+
+    function send(message) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        logDebug('outgoing skipped - websocket not open', message);
+        return false;
+      }
+      const payload = { ...message, sender: clientId, client_id: clientId, seq: ++outboundSeq };
+      logDebug('outgoing', payload);
+      ws.send(JSON.stringify(payload));
+      return true;
+    }
+
+    function handleMessage(msg) {
+      if (msg.sender === clientId || msg.client_id === clientId) {
+        logDebug('ignored duplicate/self event', msg);
+        return;
+      }
+
+      if (msg.type === 'created' || msg.type === 'joined') {
+        role = 'peer';
+        roomCode = msg.room;
+        roomCodeInput.value = roomCode;
+        updateBadges();
+        setSyncStatus('connected as peer', 'ok');
+        addChatLine('System', `${msg.type === 'created' ? 'Created' : 'Joined'} room ${roomCode}`);
+        send({ type: 'resync_request', room: roomCode });
+        return;
+      }
+
+      if (msg.type === 'error') {
+        setSyncStatus('error', 'bad');
+        addChatLine('System', msg.message || 'Server error');
+        logDebug('server error', msg.message || 'Server error');
+        return;
+      }
+
+      if (msg.type === 'state') {
+        applyRemoteState(msg.state, true, 'state-after-join');
+        return;
+      }
+
+      if (msg.type === 'play' || msg.type === 'pause' || msg.type === 'seek' || msg.type === 'sync') {
+        logDebug('incoming sync message', msg);
+        applyRemoteState(msg, msg.type !== 'sync', msg.type);
+        return;
+      }
+
+      if (msg.type === 'chat') addChatLine(msg.role || 'Peer', msg.text || '');
+    }
+
+    // ----- Collaborative playback sync: every peer may update room state; remote updates never rebroadcast. -----
+    function correctedTime(remoteState) {
+      const t = Number(remoteState.time || 0);
+      if ((remoteState.paused ?? !remoteState.is_playing) && remoteState.type !== 'play') return t;
+      const updated = Number(remoteState.timestamp || remoteState.last_update_timestamp || Date.now() / 1000);
+      return t + Math.max(0, Date.now() / 1000 - updated);
+    }
+
+    async function applyRemoteState(remoteState, snap, reason) {
+      if (!video.src) {
+        setSyncStatus('load video first', 'warn');
+        logDebug('sync skipped - no video loaded', remoteState);
+        return;
+      }
+
+      const target = correctedTime(remoteState);
+      const drift = target - video.currentTime;
+      const now = Date.now();
+      isRemoteUpdate = true;
+
+      if (snap || (Math.abs(drift) > FORCE_SEEK_DRIFT && now - lastRemoteCorrection > SEEK_COOLDOWN_MS)) {
+        safeSeek(target);
+        lastRemoteCorrection = now;
+        setSyncStatus(`seek corrected ${drift.toFixed(2)}s`, 'warn');
+        logDebug('sync force seek', { reason, target, drift });
+      } else if (Math.abs(drift) > GENTLE_DRIFT) {
+        video.playbackRate = Math.max(0.9, Math.min(1.1, 1 + drift * 0.04));
+        setTimeout(() => { video.playbackRate = 1; updatePlayerUi(); }, 1600);
+        setSyncStatus(`smooth ${drift.toFixed(2)}s`, 'ok');
+        logDebug('sync gentle correction', { reason, drift, playbackRate: video.playbackRate });
+      } else {
+        setSyncStatus(`good (${drift.toFixed(2)}s)`, 'ok');
+      }
+
+      const shouldPlay = !(remoteState.paused ?? !remoteState.is_playing);
+      try {
+        if (shouldPlay) await video.play();
+        else video.pause();
+      } catch (err) {
+        addChatLine('System', 'Browser blocked autoplay. Tap Play once, then sync again.');
+        logDebug('autoplay blocked', err.message || String(err));
+      }
+      setTimeout(() => { isRemoteUpdate = false; logDebug('remote update suppression ended'); }, 350);
+    }
+
+    function safeSeek(time) {
+      if (!Number.isFinite(time)) return;
+      const max = Number.isFinite(video.duration) ? video.duration : time;
+      video.currentTime = Math.max(0, Math.min(time, max));
+    }
+
+    function playbackState(type) {
+      const timestamp = Date.now() / 1000;
+      return {
+        type,
+        room: roomCode,
+        time: video.currentTime || 0,
+        paused: video.paused,
+        is_playing: !video.paused,
+        playback_rate: video.playbackRate || 1,
+        timestamp,
+        last_update_timestamp: timestamp
+      };
+    }
+
+    function broadcastPlaybackState(type, options = {}) {
+      if (!roomCode) return false;
+      if (isRemoteUpdate) {
+        logDebug('remote update suppression - not rebroadcasting', { type });
+        return false;
+      }
+      const state = playbackState(type);
+      const eventKey = `${type}:${state.paused}:${state.time.toFixed(1)}`;
+      const now = Date.now();
+      if (!options.force && eventKey === lastSentEventKey && now - lastSentAt < SEND_COOLDOWN_MS) {
+        logDebug('ignored duplicate local event', { eventKey });
+        return false;
+      }
+      lastSentEventKey = eventKey;
+      lastSentAt = now;
+      if (type === 'sync') setSyncStatus('Syncing...', 'warn');
+      const sent = send(state);
+      if (sent) {
+        logDebug('outgoing sync message', state);
+        if (type === 'sync') setTimeout(() => setSyncStatus('Synced', 'ok'), 300);
+      } else if (type === 'sync') {
+        pendingSyncAfterReconnect = true;
+        setSyncStatus('Sync queued until reconnect', 'warn');
+      }
+      return sent;
+    }
+
+    // ----- Local file and codec diagnostics -----
+    function revokeOldObjectUrl() {
+      if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
+      mediaObjectUrl = null;
+    }
+
+    function describeCanPlay(file) {
+      const checks = [];
+      if (file.type) checks.push(`${file.type}: ${video.canPlayType(file.type) || 'unknown'}`);
+      checks.push('H.264 MP4: ' + (video.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"') || 'unknown'));
+      checks.push('WebM VP9: ' + (video.canPlayType('video/webm; codecs="vp9, opus"') || 'unknown'));
+      return checks.join(' | ');
+    }
+
+    function loadMediaSource(src, label) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      video.src = src;
+      video.load();
+      showLoading(true);
+      setSyncStatus('media loading', 'warn');
+      logDebug('media source set', label);
+    }
+
+    function warnForPossiblyUnsupportedFile(file) {
+      const extension = (file.name.split('.').pop() || '').toLowerCase();
+      const browserAnswer = file.type ? video.canPlayType(file.type) : '';
+      const known = ['mp4', 'webm', 'mkv'];
+      if (!known.includes(extension)) {
+        return `Selected ${file.name}. Unknown extension .${extension}. Browser may not play it. ${describeCanPlay(file)}`;
+      }
+      if (extension === 'mkv') {
+        return `Selected ${file.name}. MKV support depends on your browser and codecs. If audio plays with black video, convert/download H.264 MP4 or WebM. ${describeCanPlay(file)}`;
+      }
+      if (file.type && browserAnswer === '') {
+        return `Selected ${file.name}, but this browser does not report support for ${file.type}. If video is black, the video codec is likely unsupported. ${describeCanPlay(file)}`;
+      }
+      return `Selected ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB). ${describeCanPlay(file)}`;
+    }
+
+    // ----- User actions -----
+    document.getElementById('createRoom').onclick = () => connect({ type: 'create' });
+    document.getElementById('joinRoom').onclick = () => {
+      const room = roomCodeInput.value.trim().toUpperCase();
+      if (!room) return alert('Enter a room code.');
+      connect({ type: 'join', room });
+    };
+
+    document.getElementById('fileInput').onchange = event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      revokeOldObjectUrl();
+      mediaObjectUrl = URL.createObjectURL(file);
+      fileInfo.textContent = warnForPossiblyUnsupportedFile(file);
+      loadMediaSource(mediaObjectUrl, { name: file.name, type: file.type, size: file.size });
+    };
+
+    document.getElementById('loadUrl').onclick = () => {
+      const url = document.getElementById('urlInput').value.trim();
+      if (!url) return;
+      revokeOldObjectUrl();
+      fileInfo.textContent = 'Loaded direct URL. The remote server must allow browser video playback and CORS/range requests.';
+      loadMediaSource(url, url);
+    };
+
+    playPauseBtn.onclick = () => {
+      if (video.paused) video.play().catch(err => logDebug('play failed', err.message || String(err)));
+      else video.pause();
+    };
+
+    muteBtn.onclick = () => {
+      video.muted = !video.muted;
+      updatePlayerUi();
+    };
+
+    volume.oninput = () => {
+      video.volume = Number(volume.value);
+      video.muted = video.volume === 0;
+      localStorage.setItem('watchTogetherVolume', String(video.volume));
+      updatePlayerUi();
+    };
+
+    function isVideoFullscreen() {
+      return document.fullscreenElement === video || video.webkitDisplayingFullscreen;
+    }
+
+    async function enterNativeFullscreen() {
+      try {
+        logDebug('fullscreen enter requested', { target: 'video' });
+        if (video.requestFullscreen) {
+          await video.requestFullscreen();
+          logDebug('fullscreen entered via video.requestFullscreen');
+        } else if (video.webkitEnterFullscreen) {
+          logDebug('fullscreen mobile fallback: webkitEnterFullscreen');
+          video.webkitEnterFullscreen();
+        } else if (video.webkitRequestFullscreen) {
+          logDebug('fullscreen fallback: webkitRequestFullscreen');
+          video.webkitRequestFullscreen();
+        } else {
+          throw new Error('Native fullscreen is not supported by this browser.');
+        }
+      } catch (err) {
+        logDebug('fullscreen error', err.message || String(err));
+      }
+    }
+
+    async function exitNativeFullscreen() {
+      try {
+        logDebug('fullscreen exit requested');
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else if (video.webkitDisplayingFullscreen && video.webkitExitFullscreen) video.webkitExitFullscreen();
+      } catch (err) {
+        logDebug('fullscreen exit error', err.message || String(err));
+      }
+    }
+
+    fullscreenBtn.onclick = () => {
+      if (isVideoFullscreen()) exitNativeFullscreen();
+      else enterNativeFullscreen();
+    };
+
+    video.addEventListener('dblclick', () => {
+      logDebug('video double-click fullscreen toggle');
+      if (isVideoFullscreen()) exitNativeFullscreen();
+      else enterNativeFullscreen();
+    });
+
+    resyncBtn.onclick = () => {
+      logDebug('manual sync button clicked');
+      broadcastPlaybackState('sync', { force: true, reason: 'manual-button' });
+    };
+
+    sendChatBtn.onclick = () => {
+      const input = document.getElementById('chatText');
+      const text = input.value.trim();
+      if (!text) return;
+      send({ type: 'chat', room: roomCode, text });
+      input.value = '';
+    };
+
+    progress.addEventListener('input', () => {
+      userDraggingProgress = true;
+      if (Number.isFinite(video.duration)) timeDisplay.textContent = `${formatTime((Number(progress.value) / 1000) * video.duration)} / ${formatTime(video.duration)}`;
+    });
+    progress.addEventListener('change', () => {
+      userDraggingProgress = false;
+      if (Number.isFinite(video.duration)) safeSeek((Number(progress.value) / 1000) * video.duration);
+    });
+
+    // ----- Media events: all peers can broadcast local playback changes; remote updates are suppressed. -----
+    video.addEventListener('loadedmetadata', () => {
+      showLoading(false);
+      updatePlayerUi();
+      logDebug('metadata loaded', { duration: video.duration, videoWidth: video.videoWidth, videoHeight: video.videoHeight });
+      if (!video.videoWidth || !video.videoHeight) {
+        fileInfo.textContent += ' Warning: browser reports no decoded video dimensions. If audio works but video is black, the video codec is not supported by this browser.';
+      }
+    });
+    video.addEventListener('loadeddata', () => { showLoading(false); logDebug('first frame loaded'); });
+    video.addEventListener('canplay', () => { showLoading(false); setSyncStatus('ready', 'ok'); });
+    video.addEventListener('waiting', () => { showLoading(true); logDebug('video waiting/buffering'); });
+    video.addEventListener('playing', () => { showLoading(false); updatePlayerUi(); });
+    video.addEventListener('timeupdate', updatePlayerUi);
+    video.addEventListener('durationchange', updatePlayerUi);
+    video.addEventListener('volumechange', updatePlayerUi);
+    video.addEventListener('play', () => { logDebug('playback play'); updatePlayerUi(); if (!isRemoteUpdate) broadcastPlaybackState('play'); else logDebug('remote update suppression - play event ignored'); });
+    video.addEventListener('pause', () => { logDebug('playback pause'); updatePlayerUi(); if (!isRemoteUpdate) broadcastPlaybackState('pause'); else logDebug('remote update suppression - pause event ignored'); });
+    video.addEventListener('seeked', () => {
+      logDebug('playback seeked', { time: video.currentTime, isRemoteUpdate });
+      if (isRemoteUpdate) { logDebug('remote update suppression - seek event ignored'); return; }
+      const now = Date.now();
+      if (now - lastLocalSeekSent > 900) {
+        lastLocalSeekSent = now;
+        broadcastPlaybackState('seek');
+      }
+    });
+    video.addEventListener('error', () => {
+      showLoading(false);
+      const error = video.error;
+      const messages = {
+        1: 'Loading aborted.',
+        2: 'Network error while loading video.',
+        3: 'Browser could not decode this video. Try H.264/AAC MP4 or WebM.',
+        4: 'Video format or codec is not supported by this browser.'
+      };
+      const message = messages[error?.code] || 'Unknown video error.';
+      fileInfo.textContent = message;
+      setSyncStatus('video error', 'bad');
+      logDebug('video error', { code: error?.code, message, src: video.currentSrc });
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      const active = isVideoFullscreen();
+      fullscreenBtn.textContent = active ? '⛶ Exit' : '⛶ Fullscreen';
+      logDebug(active ? 'fullscreen entered' : 'fullscreen exited', { element: document.fullscreenElement?.tagName || 'none' });
+    });
+    video.addEventListener('webkitbeginfullscreen', () => {
+      fullscreenBtn.textContent = '⛶ Exit';
+      logDebug('fullscreen entered via webkit mobile video player');
+    });
+    video.addEventListener('webkitendfullscreen', () => {
+      fullscreenBtn.textContent = '⛶ Fullscreen';
+      logDebug('fullscreen exited via webkit mobile video player');
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && document.fullscreenElement) {
+        logDebug('escape pressed during fullscreen');
+        exitNativeFullscreen();
+      }
+    });
+
+    updatePlayerUi();
+    updateBadges();
+  </script>
+</body>
+</html>
