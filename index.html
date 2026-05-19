@@ -129,8 +129,9 @@
       <div class="attached-controls">
         <label for="fileInput">Local video file</label>
         <div class="row">
-          <input id="fileInput" type="file" accept="video/*,.mkv" />
+          <input id="fileInput" type="file" accept="*/*" />
           <button id="pickFile" type="button" class="secondary">Pick File</button>
+          <button id="pickFolder" type="button" class="secondary">Grant Folder Access</button>
         </div>
         <div id="fileInfo" class="notice" style="margin-top: 10px;">No file selected. MP4/WebM are safest; MKV only works in browsers that support its codecs.</div>
 
@@ -199,6 +200,7 @@
     const timeDisplay = document.getElementById('timeDisplay');
     const fileInfo = document.getElementById('fileInfo');
     const pickFileBtn = document.getElementById('pickFile');
+    const pickFolderBtn = document.getElementById('pickFolder');
 
     let ws = null;
     let role = 'peer';
@@ -597,6 +599,24 @@
       logDebug('media source set', label);
     }
 
+
+
+    async function findFirstVideoFileInDirectory(directoryHandle, depth = 0) {
+      if (depth > 3) return null;
+      for await (const [name, handle] of directoryHandle.entries()) {
+        if (handle.kind === 'file') {
+          const lower = name.toLowerCase();
+          if (lower.endsWith('.mp4') || lower.endsWith('.webm') || lower.endsWith('.mkv') || lower.endsWith('.mov') || lower.endsWith('.m4v')) {
+            return await handle.getFile();
+          }
+        } else if (handle.kind === 'directory') {
+          const nested = await findFirstVideoFileInDirectory(handle, depth + 1);
+          if (nested) return nested;
+        }
+      }
+      return null;
+    }
+
     function warnForPossiblyUnsupportedFile(file) {
       const extension = (file.name.split('.').pop() || '').toLowerCase();
       const browserAnswer = file.type ? video.canPlayType(file.type) : '';
@@ -653,6 +673,30 @@
       }
       // Fallback: use standard file input (common path on Android browsers).
       document.getElementById('fileInput').click();
+    };
+
+
+
+    pickFolderBtn.onclick = async () => {
+      // Request directory permission so users can browse full file storage on
+      // supported browsers (instead of media-only picker restrictions).
+      if (!window.showDirectoryPicker) {
+        logDebug('showDirectoryPicker unavailable - using file input fallback');
+        document.getElementById('fileInput').click();
+        return;
+      }
+      try {
+        const directoryHandle = await window.showDirectoryPicker({ mode: 'read' });
+        const file = await findFirstVideoFileInDirectory(directoryHandle);
+        if (!file) {
+          fileInfo.textContent = 'Folder access granted, but no supported video file was found in the selected folder.';
+          return;
+        }
+        fileInfo.textContent = 'Folder access granted. Loaded first supported video from selected folder.';
+        handleSelectedFile(file);
+      } catch (err) {
+        if (err?.name !== 'AbortError') logDebug('showDirectoryPicker failed', err.message || String(err));
+      }
     };
 
     document.getElementById('loadUrl').onclick = () => {
