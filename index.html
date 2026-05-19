@@ -128,7 +128,10 @@
 
       <div class="attached-controls">
         <label for="fileInput">Local video file</label>
-        <input id="fileInput" type="file" accept="video/mp4,video/webm,video/x-matroska,.mp4,.webm,.mkv" />
+        <div class="row">
+          <input id="fileInput" type="file" accept="video/*,.mkv" />
+          <button id="pickFile" type="button" class="secondary">Pick File</button>
+        </div>
         <div id="fileInfo" class="notice" style="margin-top: 10px;">No file selected. MP4/WebM are safest; MKV only works in browsers that support its codecs.</div>
 
         <label for="urlInput">Or direct video URL</label>
@@ -195,6 +198,7 @@
     const volume = document.getElementById('volume');
     const timeDisplay = document.getElementById('timeDisplay');
     const fileInfo = document.getElementById('fileInfo');
+    const pickFileBtn = document.getElementById('pickFile');
 
     let ws = null;
     let role = 'peer';
@@ -617,13 +621,38 @@
       connect({ type: 'join', room });
     };
 
-    document.getElementById('fileInput').onchange = event => {
-      const file = event.target.files[0];
+    function handleSelectedFile(file) {
       if (!file) return;
       revokeOldObjectUrl();
       mediaObjectUrl = URL.createObjectURL(file);
       fileInfo.textContent = warnForPossiblyUnsupportedFile(file);
       loadMediaSource(mediaObjectUrl, { name: file.name, type: file.type, size: file.size });
+    }
+
+    document.getElementById('fileInput').onchange = event => {
+      handleSelectedFile(event.target.files[0]);
+    };
+
+    pickFileBtn.onclick = async () => {
+      // Some browsers (desktop Chromium) support a stronger permission-based picker.
+      if (window.showOpenFilePicker) {
+        try {
+          const [fileHandle] = await window.showOpenFilePicker({
+            multiple: false,
+            types: [{
+              description: 'Video files',
+              accept: { 'video/*': ['.mp4', '.webm', '.mkv', '.mov', '.m4v'] }
+            }]
+          });
+          const file = await fileHandle.getFile();
+          handleSelectedFile(file);
+          return;
+        } catch (err) {
+          if (err?.name !== 'AbortError') logDebug('showOpenFilePicker failed', err.message || String(err));
+        }
+      }
+      // Fallback: use standard file input (common path on Android browsers).
+      document.getElementById('fileInput').click();
     };
 
     document.getElementById('loadUrl').onclick = () => {
